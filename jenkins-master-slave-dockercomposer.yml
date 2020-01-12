@@ -17,7 +17,7 @@ services:
       JENKINS_NAME: "worker"
       JENKINS_USER: "admin"
       JENKINS_PASS: "admin"
-      JENKINS_RETRY: "10"
+      JENKINS_RETRY: "30"
     volumes:
     - jenkins-worker:/var/jenkins_home/worker
 
