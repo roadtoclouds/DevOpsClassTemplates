@@ -158,6 +158,13 @@ Resources:
         - "arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess"          
         - "arn:aws:iam::aws:policy/ReadOnlyAccess"
 
+  EC2InstanceProfile: 
+    Type: "AWS::IAM::InstanceProfile"
+    Properties: 
+      Path: "/"
+      Roles: 
+        - 
+          Ref: "EC2Role"
 
   # ASGLaunchConfig:
   #   Type: AWS::AutoScaling::LaunchConfiguration
