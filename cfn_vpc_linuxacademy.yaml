@@ -58,6 +58,24 @@ Resources:
       Tags:
         - Key: Name
           Value: PrivateSubnetA
+  DataSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs ]
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.5.0/24
+      Tags:
+        - Key: Name
+          Value: DataSubnetA
+  DataSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [ 1, !GetAZs ]
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.6.0/24
+      Tags:
+        - Key: Name
+          Value: DataSubnetA
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
@@ -93,7 +111,7 @@ Resources:
         - EIPSubnet
         - AllocationId
       SubnetId:
-        Ref: PrivateSubnetA
+        Ref: PublicSubnetA
       Tags:
         - Key: Name
           Value: NATGatewaySubnet
