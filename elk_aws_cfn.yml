@@ -1,0 +1,333 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Cloudformation template to create ec2 and install ELK
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  AmiId:
+    Description: Image Id
+    Type: String
+    ConstraintDescription: must be ami-id of existing
+    Default: ami-0123
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.medium
+      - t3a.medium
+      - t2.large
+      - m1.small
+      - m1.medium
+      - m1.large
+    ConstraintDescription: must be a valid EC2 instance type.
+  VolumeSize:
+    Description: Size of the volume
+    Type: String
+    Default: '20'
+  SecurityGroupsList:
+    Description: List of security groups needs to associated
+    Type: 'List<AWS::EC2::SecurityGroup::Id>'
+  IAMRoleName:
+    Description: Name of the IAM Role
+    Type: String
+    Default: ec2role
+  Subnets:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description:  The list of SubnetIds in your Virtual Private Cloud (VPC)
+    ConstraintDescription: must be a list of at least two existing subnets associated with at least two different availability zones. They should be residing in the selected Virtual Private Cloud.
+  SubnetAvailabilityZones:
+    Type: 'List<AWS::EC2::AvailabilityZone::Name>'
+    Description: Availability Zones
+  VpcId:
+    Type: 'AWS::EC2::VPC::Id'
+    Description: VPC ID
+    ConstraintDescription: must be the VPC Id of an existing Virtual Private Cloud.
+  LowThreshold:
+    Type: String
+    Description: CPU utilization to scale down
+    Default: '5'
+  HighThreshold:
+    Type: String
+    Description: CPU utilization to scale up
+    Default: '80'
+  ElastiSearchLoadBalancerName:
+    Type: String
+    Description: LoadBalancer Name
+    Default: elkalb
+
+Resources:
+  ElasticSearchLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      IpAddressType: ipv4
+      Name: !Ref ElastiSearchLoadBalancerName
+      Type: application
+      Scheme: internal
+      SecurityGroups: !Ref SecurityGroupsList
+      Subnets: !Ref Subnets
+
+  ElasticSearchTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: '/'
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      Name: ELKTargetGroup
+      Port: 9200
+      Protocol: HTTP
+      TargetType: instance
+      UnhealthyThresholdCount: 10
+      VpcId: !Ref VpcId
+
+  ElastiSearchListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ElasticSearchTargetGroup
+      LoadBalancerArn: !Ref ElasticSearchLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      
+  ElasticSearchLaunchConfiguration:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      AssociatePublicIpAddress: false
+      EbsOptimized: false
+      IamInstanceProfile: !Ref IAMRoleName
+      ImageId: !Ref AmiId
+      KeyName: !Ref KeyName
+      LaunchConfigurationName: ElasticSearchLaunchConfiguration
+      InstanceType: !Ref InstanceType
+      SecurityGroups: !Ref SecurityGroupsList
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            #
+            # Install ELK
+            rpm --import https://packages.elastic.co/GPG-KEY-elasticsearch
+            touch /etc/yum.repos.d/elasticsearch.repo
+            cat <<EOD >/etc/yum.repos.d/elasticsearch.repo
+            [elasticsearch-7.x]
+            name=Elasticsearch repository for 7.x packages
+            baseurl=https://artifacts.elastic.co/packages/7.x/yum
+            gpgcheck=1
+            gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+            enabled=1
+            autorefresh=1
+            type=rpm-md
+            EOD
+
+            yum install elasticsearch -y
+            /usr/share/elasticsearch/bin/elasticsearch-plugin install discovery-ec2 --batch
+            /usr/share/elasticsearch/bin/elasticsearch-plugin install repository-s3 --batch
+
+            systemctl daemon-reload
+            systemctl enable elasticsearch.service
+
+            # Update config file /etc/elasticsearch/elasticsearch.yml
+            echo "cluster.name: elkcluster" >> /etc/elasticsearch/elasticsearch.yml
+            echo "# node.name: <NODE_NAME>" >> /etc/elasticsearch/elasticsearch.yml
+            echo "bootstrap.memory_lock: false" >> /etc/elasticsearch/elasticsearch.yml
+            echo "network.host: [_ec2_,_local_]" >> /etc/elasticsearch/elasticsearch.yml
+            echo "network.publish_host: _ec2:privateIp_" >> /etc/elasticsearch/elasticsearch.yml
+            echo "transport.publish_host: _ec2:privateIp_" >> /etc/elasticsearch/elasticsearch.yml
+            echo "discovery.zen.hosts_provider: ec2" >> /etc/elasticsearch/elasticsearch.yml
+            echo "# discovery.ec2.any_group: true" >> /etc/elasticsearch/elasticsearch.yml
+            echo "# discovery.ec2.host_type: private_ip" >> /etc/elasticsearch/elasticsearch.yml
+            echo "discovery.ec2.tag.ElasticSearch: es" >> /etc/elasticsearch/elasticsearch.yml
+            echo "discovery.ec2.endpoint: ec2.us-west-2.amazonaws.com" >> /etc/elasticsearch/elasticsearch.yml
+            echo "s3.client.default.endpoint: s3.us-west-2.amazonaws.com" >> /etc/elasticsearch/elasticsearch.yml
+            echo "cloud.node.auto_attributes: true" >> /etc/elasticsearch/elasticsearch.yml
+            echo "cluster.routing.allocation.awareness.attributes: aws_availability_zone" >> /etc/elasticsearch/elasticsearch.yml
+            echo "xpack.security.enabled: false" >> /etc/elasticsearch/elasticsearch.yml
+            echo "http.port: 9200" >> /etc/elasticsearch/elasticsearch.yml
+            echo "transport.tcp.port: 9300" >> /etc/elasticsearch/elasticsearch.yml
+            systemctl restart elasticsearch.service
+
+  ElasticSearchAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AutoScalingGroupName: ElasticSearchAutoScalingGroup
+      DesiredCapacity: 2
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      LaunchConfigurationName: !Ref ElasticSearchLaunchConfiguration
+      AvailabilityZones: !Ref SubnetAvailabilityZones
+      TargetGroupARNs:
+        - !Ref ElasticSearchTargetGroup
+      MaxSize: 3
+      MinSize: 2
+      VPCZoneIdentifier: !Ref Subnets
+      Tags:
+        - Key: ElasticSearch
+          PropagateAtLaunch: true
+          Value: es
+
+
+  ElasticSearchScaleUpPolicy:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref ElasticSearchAutoScalingGroup
+      Cooldown: '1'
+      ScalingAdjustment: '1'
+
+  ElasticSearchCPUAlarmHigh:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      EvaluationPeriods: '1'
+      Statistic: Average
+      Threshold: !Ref HighThreshold
+      AlarmDescription: Alarm if CPU too high or metric disappears indicating instance is down
+      Period: '60'
+      AlarmActions:
+        - !Ref ElasticSearchScaleUpPolicy
+      Namespace: AWS/EC2
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref ElasticSearchAutoScalingGroup
+      ComparisonOperator: GreaterThanThreshold
+      MetricName: CPUUtilization
+
+  ElasticSearchScaleDownPolicy:
+    Type: 'AWS::AutoScaling::ScalingPolicy'
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName: !Ref ElasticSearchAutoScalingGroup
+      Cooldown: '1'
+      ScalingAdjustment: '-1'
+
+  ElasticSearchCPUAlarmLow:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      EvaluationPeriods: '1'
+      Statistic: Average
+      Threshold: !Ref LowThreshold
+      AlarmDescription: Alarm if CPU too high or metric disappears indicating instance is down
+      Period: '60'
+      AlarmActions:
+        - !Ref ElasticSearchScaleDownPolicy
+      Namespace: AWS/EC2
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref ElasticSearchScaleDownPolicy
+      ComparisonOperator: LessThanThreshold
+      MetricName: CPUUtilization
+# LogStash & Kibana
+
+  KibanaAutoScalingGroup:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      AutoScalingGroupName: KibanaAutoScalingGroup
+      DesiredCapacity: 1
+      HealthCheckGracePeriod: 300
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref KibanaLaunchConfiguration
+      AvailabilityZones: !Ref SubnetAvailabilityZones
+      TargetGroupARNs:
+        - !Ref ElasticSearchTargetGroup
+      MaxSize: 1
+      MinSize: 1
+      VPCZoneIdentifier: !Ref Subnets 
+      
+  KibanaLaunchConfiguration:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      AssociatePublicIpAddress: false
+      EbsOptimized: false
+      IamInstanceProfile: !Ref IAMRoleName
+      ImageId: !Ref AmiId
+      KeyName: !Ref KeyName
+      LaunchConfigurationName: KibanaLaunchConfiguration
+      InstanceType: !Ref InstanceType
+      SecurityGroups: !Ref SecurityGroupsList
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -xe
+            #
+            # Install Logstash and Kibana
+            sudo yum install -y java            
+            cat <<EOT >/etc/yum.repos.d/logstash.repo
+            [logstash-7.x]
+            name=Elastic repository for 7.x packages
+            baseurl=https://artifacts.elastic.co/packages/7.x/yum
+            gpgcheck=1
+            gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+            enabled=1
+            autorefresh=1
+            type=rpm-md
+            EOT
+
+            yum install -y logstash
+
+            # Command to validate logstash config
+            #sudo -u logstash /usr/share/logstash/bin/logstash --path.settings /etc/logstash -t
+
+            # File Inputs & Outputs
+            echo 'input {
+                file {
+                path => [ "/var/log/*.log", "/var/log/messages", "/var/log/syslog" ]
+                type => "syslog"
+                }
+            }
+            output {
+                elasticsearch {
+                    hosts => ["localhost:9200"]
+                }
+                #stdout { codec => rubydebug }
+            }' | sudo tee /etc/logstash/conf.d/logstash-syslog.conf
+            # Filter configuration
+            echo 'filter {
+                if [type] == "syslog" {
+                grok {
+                    match => { "message" => "%{SYSLOGTIMESTAMP:syslog_timestamp} %{SYSLOGHOST:syslog_hostname} %{DATA:syslog_program}(?:\[%{POSINT:syslog_pid}\])?:
+                    %{GREEDYDATA:syslog_message}" }
+                    add_field => [ "received_at", "%{@timestamp}" ]
+                    add_field => [ "received_from", "%{host}" ]
+                }
+                date {
+                    match => [ "syslog_timestamp", "MMM  d HH:mm:ss", "MMM dd HH:mm:ss" ]
+                }
+                }
+            }' | sudo tee /etc/logstash/conf.d/logstash-syslog-filter.conf
+            chgrp logstash /var/log/*.log /var/log/messages
+            chmod g+r /var/log/*.log /var/log/messages
+            chmod 644 /etc/logstash/conf.d/*
+            /usr/share/logstash/bin/system-install /etc/logstash/startup.options sysv
+            systemctl enable logstash.service
+            systemctl restart logstash.service
+            systemctl status logstash.service
+
+            ####Kibana 
+            #https://artifacts.elastic.co/downloads/kibana/kibana-7.5.0-x86_64.rpm
+
+            touch /etc/yum.repos.d/kibana.repo
+            cat <<EOT >/etc/yum.repos.d/kibana.repo
+            [kibana-7.x]
+            name=Kibana repository for 7.x packages
+            baseurl=https://artifacts.elastic.co/packages/7.x/yum
+            gpgcheck=1
+            gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+            enabled=1
+            autorefresh=1
+            type=rpm-md
+            EOT
+
+            yum install -y kibana
+
+            privateip=$(curl http://169.254.169.254/latest/meta-data/local-ipv4)
+            echo "server.host: $privateip" >>/etc/kibana/kibana.yml
+            echo "elasticsearch.hosts: localhost:9200" >> /etc/kibana/kibana.yml
+
+            systemctl daemon-reload
+            systemctl enable kibana.service
+            systemctl restart kibana.service
+            systemctl status kibana.service
