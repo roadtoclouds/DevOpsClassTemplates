@@ -39,7 +39,7 @@ Resources:
       CidrBlock: 10.0.2.0/24
       Tags:
         - Key: Name
-          Value: PublicSubnetA
+          Value: PublicSubnetB
   PrivateSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
@@ -57,7 +57,7 @@ Resources:
       CidrBlock: 10.0.4.0/24
       Tags:
         - Key: Name
-          Value: PrivateSubnetA
+          Value: PrivateSubnetB
   DataSubnetA:
     Type: AWS::EC2::Subnet
     Properties:
@@ -75,7 +75,7 @@ Resources:
       CidrBlock: 10.0.6.0/24
       Tags:
         - Key: Name
-          Value: DataSubnetA
+          Value: DataSubnetB
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
