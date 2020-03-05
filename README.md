@@ -11,3 +11,9 @@ Docker installation
 apt-get update
 apt-get install default-jdk docker.io -y
 ```
+
+### Links
+```
+CloudWatch Log Group Alerts for compliance
+https://bridgecrew.zendesk.com/hc/en-us/articles/360005847180-3-7-Ensure-a-log-metric-filter-and-alarm-exist-for-disabling-or-scheduled-deletion-of-customer-created-CMKs-
+```
