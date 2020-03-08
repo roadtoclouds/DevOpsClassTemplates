@@ -16,4 +16,5 @@ apt-get install default-jdk docker.io -y
 ```
 CloudWatch Log Group Alerts for compliance
 https://bridgecrew.zendesk.com/hc/en-us/articles/360005847180-3-7-Ensure-a-log-metric-filter-and-alarm-exist-for-disabling-or-scheduled-deletion-of-customer-created-CMKs-
+AWS Best Practice - https://www.cloudconformity.com/knowledge-base/aws/
 ```
