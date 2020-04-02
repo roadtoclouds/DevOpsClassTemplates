@@ -1,10 +1,10 @@
 ---
 AWSTemplateFormatVersion: 2010-09-09 
 Description: AWS VPC Associated Infra...
-Parameters:
-  VPC:
-    Description: "VPC ID"
-    Type: AWS::EC2::VPC::Id
+# Parameters:
+#   VPC:
+#     Description: "VPC ID"
+#     Type: AWS::EC2::VPC::Id
 #   KeyName:
 #     Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
 #     Type: AWS::EC2::KeyPair::KeyName
@@ -15,6 +15,13 @@ Parameters:
   #   Default: ami-062f7200baf2fa504
 
 Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
   InternetGateway:
     Type: AWS::EC2::InternetGateway
   VPCGatewayAttachment:
